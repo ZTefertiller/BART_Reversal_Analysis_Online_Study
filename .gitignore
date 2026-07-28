@@ -1,0 +1,98 @@
+# --- 1. IDE/OS Files (Global) ---
+.RData
+*.RData
+.Rhistory
+.Rproj.user/
+.DS_Store
+*:Zone.Identifier
+*Zone.Identifier
+
+# --- 2. Data/Processing Files (Strict Confidentiality) ---
+
+# IGNORE everything within the 'data' folder by default
+data/*
+
+# EXCEPTION: Re-include the specific folder you want to track
+!data/processed/filtered/
+!data/processed/filtered/**
+
+# EXPLICITLY IGNORE ALL CLINICAL DATA (patient-level information)
+data/clinical_data/
+data_processing/clinical/
+analysis/plotting/clinical/
+reporting/patient_study.Rmd
+
+# Ignore all large/temporary files generated anywhere
+*.csv
+*.diag
+*.json
+*.o
+*.so
+*.exe
+*.d
+*.log
+*.rds
+
+# --- 3. Modeling/MCMC Outputs (Large & Reconstructible) ---
+
+# Contents of the model-specific MCMC output folders are already covered by *.rds/*.csv
+# but we explicitly ignore the subdirectories to be safe
+mcmc/4par/*
+mcmc/ewmv/*
+mcmc/stl/*
+
+# Ignore compiled CmdStan model executables and PPC output folders
+modeling/**/ewmv_ppc
+modeling/**/stl_ppc
+modeling/**/4par_ppc
+modeling/**/fourpar/4par_ppc
+
+# Ignore CmdStan build artifacts (but keep .stan source files)
+*.hpp
+*.exe
+*.o
+*.so
+*.d
+*.tmp
+*.out
+
+# Keep all Stan source files
+!*.stan
+
+# --- 4. Analysis & Reporting Outputs (Auto-generated plots/tables) ---
+output/figures/*
+output/tables/*
+*.html
+*.pdf
+*.docx
+*.xlsx
+*.png
+*.svg
+
+# knitr/rmarkdown cache for the rendered substance mediation report
+other_analysis/substance/substance_mediation_report_cache/
+
+# compiled cmdstan model binaries + python cache
+modeling/**/ewmv_vec_reg
+__pycache__/
+*.pyc
+
+# Local-only archive of dead code/figures/data (kept on disk, out of the repo)
+graveyard/
+
+# BART_RL_Method branch: data_processing stays local-only on this branch
+data_processing/
+
+# Published anonymized data (explicitly tracked; everything needed to replicate)
+!data_published/
+!data_published/*.csv
+
+# Local-only snapshots and generated outputs — never stage these
+data_old/
+output/
+pug_presenation_scripts/
+
+# compiled cmdstan model executables (kept local, out of the repo)
+modeling/ewmv/ewmv_vec
+modeling/stl/stl_vec
+modeling/fourpar/4par

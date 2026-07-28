@@ -1,0 +1,971 @@
+---
+title: "Analysis report for: Identifying Latent MechanismsUnderlying Uncertain Risk-Taking:  Methodological Insights from Risk Contingency Reversal in the Balloon Analogue Risk Task"
+author: "Zach Tefertiller"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 2
+    number_sections: false
+    theme: flatly
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, dpi = 300)
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(patchwork)
+  library(grid)
+  library(ggtext)
+  library(kableExtra)
+  library(purrr)
+  library(scales)
+  library(ggrepel)
+  library(here)
+})
+
+# ---- shared sources -------------------------------------------------------
+source(here::here("analysis", "plotting", "utils.R"))
+source(here::here("analysis", "plotting", "build_block_features.R"))
+
+# ---- single output folder for ALL exported paper figures ------------------
+# Every ggsave in this report writes a 300-dpi PNG + an SVG here. .pf_save() is
+# a small helper so each figure is exported the same way in one line.
+PF_DIR <- here::here("reporting", "BART_RL_Online_figure_outputs")
+dir.create(PF_DIR, recursive = TRUE, showWarnings = FALSE)
+.pf_save <- function(plot, name, width, height, dpi = 300) {
+  ggsave(file.path(PF_DIR, paste0(name, ".png")), plot,
+         width = width, height = height, dpi = dpi, bg = "white",
+         limitsize = FALSE)
+  ggsave(file.path(PF_DIR, paste0(name, ".svg")), plot,
+         width = width, height = height, bg = "white", limitsize = FALSE)
+  invisible(plot)
+}
+
+theme_set(theme_minimal(base_size = 12, base_family = "Arial"))
+
+# Bold Arial 12-pt x/y axis titles, applied to every printed figure. This adds
+# ONLY axis-title styling — no new titles, labels, headers, or footnotes.
+.bold_axis <- theme(
+  axis.title.x = element_text(family = "Arial", face = "bold", size = 12),
+  axis.title.y = element_text(family = "Arial", face = "bold", size = 12)
+)
+
+# ---- data -----------------------------------------------------------------
+# Published, de-identified trial-level data (sub_id is the public key; it is
+# also used as participant_id so every downstream grouping/join works unchanged).
+data <- read.csv(here::here("data_published", "bart_rl_online_trials.csv"))
+data$participant_id <- data$sub_id
+data <- append_block_averages(
+  data, block_size = 10L,
+  blocks_per_color = c(b = 6L, o = 6L, y = 6L, p = 3L),
+  verbose = FALSE, sanity_out = NULL)
+
+is_popped <- function(x)
+  tolower(as.character(x)) %in% c("1", "true", "t", "yes", "y")
+
+# Per-balloon colours (used across the behavioural charts)
+BAL_COLS <- c(Blue = "#2630F5", Orange = "#E68D33",
+              Yellow = "#F5C744", Pink = "#CF3160")
+```
+
+```{r fits-setup, include=FALSE}
+# The 3.2GB fits are only needed for the LOOIC table, the parameter-recovery
+# grid, and the Bayesian group-level contrasts. Everything else reads the
+# lightweight modeling/ewmv/ewmv_by_block.csv.
+fits <- readRDS(here::here("mcmc", "model_fits_list.rds"))
+get_fit <- function(pattern) {
+  idx <- grep(pattern, names(fits), ignore.case = TRUE)
+  if (length(idx) != 1) stop("fit pattern '", pattern, "' matched ", length(idx))
+  fits[[idx]]
+}
+ewmv_blue   <- get_fit("^ewmv.*blue");   ewmv_orange <- get_fit("^ewmv.*orange")
+ewmv_pink   <- get_fit("^ewmv.*pink")
+stl_blue    <- get_fit("^stl.*blue");    stl_orange  <- get_fit("^stl.*orange")
+stl_pink    <- get_fit("^stl.*pink")
+fourpar_blue   <- get_fit("^fourpar.*blue");   fourpar_orange <- get_fit("^fourpar.*orange")
+fourpar_pink   <- get_fit("^fourpar.*pink")
+```
+
+# Sample
+
+```{r demographics, results='asis'}
+.demo <- data %>% dplyr::distinct(participant_id, .keep_all = TRUE)
+.age  <- suppressWarnings(as.numeric(.demo$age))
+.age  <- .age[is.finite(.age)]
+.gen  <- tolower(trimws(as.character(.demo$gender)))
+.n_male   <- sum(.gen == "male",   na.rm = TRUE)
+.n_female <- sum(.gen == "female", na.rm = TRUE)
+.n_other  <- sum(!.gen %in% c("male", "female") & !is.na(.gen) & .gen != "")
+
+cat(sprintf(
+  paste0("**N = %d participants.**  ",
+         "Age: range %d–%d years, mean %.1f, median %.0f.  ",
+         "Gender: %d female, %d male%s.\n\n"),
+  nrow(.demo),
+  min(.age), max(.age), mean(.age), median(.age),
+  .n_female, .n_male,
+  if (.n_other > 0) sprintf(", %d other/diverse", .n_other) else ""))
+```
+
+## Missing questionnaire data
+
+```{r q-missing, results='asis'}
+.demo <- data %>% dplyr::distinct(participant_id, .keep_all = TRUE)
+.Nn   <- nrow(.demo)
+
+# label -> total-score column
+.q_tot <- c("SPQ (full)" = "spq_total", "SPQ-B" = "spq_b_total",
+            "CAPS" = "caps_total", "PDI" = "pdi_total",
+            "PHQ" = "phq_total", "MDQ" = "mdq_total",
+            "PPGM" = "ppgm_total", "IPIP" = "ipip_total")
+.q_miss <- sapply(.q_tot, function(v) sum(is.na(.demo[[v]])))
+
+cat(sprintf("Out of **N = %d**, participants missing a scorable total per questionnaire:\n\n", .Nn))
+for (i in seq_along(.q_tot)) {
+  cat(sprintf("- **%s** — %d missing (n = %d)\n",
+              names(.q_tot)[i], .q_miss[i], .Nn - .q_miss[i]))
+}
+cat(sprintf(paste0("\nAll measures are complete except the **SPQ** (1 missing) ",
+                   "and the **CAPS** (2 missing); every other questionnaire has ",
+                   "the full N = %d. These are the per-test denominators used ",
+                   "in the questionnaire analyses (complete cases per measure).\n"), .Nn))
+```
+
+The full demographic breakdown and questionnaire descriptive statistics live in
+the separate supplement (`reporting/supplementary_tables.Rmd`).
+
+# Section 1 — Behavioral
+
+## BART summary table
+
+```{r summary-table}
+source(here::here("analysis", "tables", "compact_behavior.R"))
+res_behavior <- build_compact_tables(
+  data, out_prefix = here::here("reporting", "tables", "paper_bart_summary"))
+
+res_behavior$collapsed %>%
+  kbl(align = "lcccc", caption = "BART Summary") %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+```{r behavioral-objects-setup, include=FALSE}
+# Explosions by condition (expl_cond, expl_plot), the histogram legend carrier
+# (.h_leg) and the shared 24pt axis theme (.dist_axis) used by the stitched
+# figure below. Hidden setup — no standalone output.
+expl_cond <- data %>%
+  filter(balloon_color %in% c("b", "o", "p"),
+         balloon_color != "b" | trial_number < 91,
+         balloon_color != "o" | trial_number > 90) %>%
+  mutate(.pop = is_popped(popped)) %>%
+  group_by(participant_id, balloon_color) %>%
+  summarise(n_pop = sum(.pop, na.rm = TRUE), .groups = "drop") %>%
+  mutate(Condition = recode(balloon_color, b = "Pre-reversal",
+                            o = "Post-reversal", p = "Control"),
+         Condition = factor(Condition,
+                            levels = c("Pre-reversal", "Post-reversal", "Control")))
+cond_cols <- c("Pre-reversal" = unname(BAL_COLS["Blue"]),
+               "Post-reversal" = unname(BAL_COLS["Orange"]),
+               "Control" = unname(BAL_COLS["Pink"]))
+.expl_base <- 22
+expl_plot <- ggplot(expl_cond, aes(x = Condition, y = n_pop, fill = Condition)) +
+  geom_violin(color = NA, alpha = 0.35, width = 0.9, scale = "width") +
+  geom_jitter(aes(color = Condition), width = 0.12, height = 0,
+              alpha = 0.5, size = 2.4, shape = 16) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.4,
+               color = "grey20", linewidth = 0.5, fatten = 0) +
+  scale_fill_manual(values = cond_cols, guide = "none") +
+  scale_color_manual(values = cond_cols, guide = "none") +
+  labs(x = NULL, y = "Average explosions") +
+  theme_minimal(base_size = .expl_base, base_family = "Arial") +
+  theme(text = element_text(family = "Arial"),
+        panel.grid.major.x = element_blank(),
+        axis.text    = element_text(size = .expl_base, family = "Arial",
+                                    face = "bold", colour = "black"),
+        axis.text.x  = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 24, family = "Arial",
+                                    face = "bold", colour = "black"),
+        plot.margin  = margin(14, 5, 14, 5))
+
+source(here::here("analysis", "plotting", "histograms.R"))
+pdf(NULL)
+.h_leg <- generate_color_avg_histograms(data, dv_mode = "adjusted",
+                                        save_name = "paper_color_avg_histograms",
+                                        base_size = 22, show_legend = TRUE)
+invisible(dev.off())
+.dist_axis <- theme(
+  axis.title.x = element_text(family = "Arial", face = "bold", size = 24),
+  axis.title.y = element_text(family = "Arial", face = "bold", size = 24))
+```
+
+```{r yuen-objects-setup, include=FALSE}
+# Yuen trimmed-mean block comparisons: builds yuen_adj / yuen_all (with shared
+# bar geometry + y-range), the axis theme (.yuen_axis) and the standalone shared
+# legend grob (yuen_legend).
+source(here::here("analysis", "plotting", "nonparametric_analyses.R"))
+.yuen_args <- list(bar_gap = 0.9, base_size = 22, sig_size = 6.5,
+                   sig_linewidth = 1.0)
+.ya0 <- do.call(generate_binned_anova_wrs2_yuend, c(list(
+  data, dv_mode = "adjusted", p_adjust_method = "holm",
+  save_name = "paper_yuen_adjusted_pumps", y_lab_override = "Adjusted pumps",
+  bar_base = 0.4), .yuen_args))
+.yl0 <- do.call(generate_binned_anova_wrs2_yuend, c(list(
+  data, dv_mode = "all", p_adjust_method = "holm",
+  save_name = "paper_yuen_all_pumps", y_lab_override = "All pumps",
+  bar_base = 0.4), .yuen_args))
+.blocks   <- c("First 10", "Middle 10", "Last 10")
+.box_top  <- pmax(.ya0$block_ymax[.blocks], .yl0$block_ymax[.blocks])
+.delta    <- 0.10 * max(.box_top, na.rm = TRUE)
+.bar_y0   <- setNames(.box_top + 0.7 * .delta, .blocks)
+yuen_adj <- do.call(generate_binned_anova_wrs2_yuend, c(list(
+  data, dv_mode = "adjusted", p_adjust_method = "holm",
+  save_name = "paper_yuen_adjusted_pumps", y_lab_override = "Adjusted pumps",
+  bar_y_override = .bar_y0, bar_delta_override = .delta), .yuen_args))
+yuen_all <- do.call(generate_binned_anova_wrs2_yuend, c(list(
+  data, dv_mode = "all", p_adjust_method = "holm",
+  save_name = "paper_yuen_all_pumps", y_lab_override = "All pumps",
+  bar_y_override = .bar_y0, bar_delta_override = .delta), .yuen_args))
+.ytop <- max(yuen_adj$top_text, yuen_all$top_text) + 0.8 * .delta
+.yrng <- c(0, .ytop)
+.strip_legend <- function(p) p + theme(legend.position = "none")
+.yuen_axis <- theme(
+  axis.title.x = element_text(family = "Arial", face = "bold", size = 24),
+  axis.title.y = element_text(family = "Arial", face = "bold", size = 24))
+yuen_adj_p <- yuen_adj$plot + coord_cartesian(ylim = .yrng) + .yuen_axis
+yuen_all_p <- .strip_legend(yuen_all$plot) + coord_cartesian(ylim = .yrng) + .yuen_axis
+.leg_src <- yuen_adj$plot +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        text = element_text(family = "Arial"))
+.gt <- ggplotGrob(.leg_src)
+.li <- which(vapply(.gt$grobs, function(g) g$name, "") == "guide-box")
+yuen_legend <- if (length(.li)) .gt$grobs[[.li[1]]] else ggplot2::zeroGrob()
+```
+
+```{r q-objects-setup, include=FALSE}
+# Questionnaire objects: q_per_id (per-participant scores + SPQ factors),
+# q_core, and make_q_heatmap(); Q_GROUPS / q_density / q_stats_card come from the
+# sourced scripts.
+source(here::here("analysis", "plotting", "spq_factors.R"))
+source(here::here("analysis", "plotting", "questionnaire_meta.R"))
+source(here::here("analysis", "plotting", "questionnaire_figures.R"))
+
+q_vars <- c("spq_total", "spq_cogper", "spq_interp", "spq_disorg",
+            "caps_total", "pdi_total", "mdq_total", "phq_total")
+q_meta <- data.frame(
+  var   = q_vars,
+  label = c("SPQ", "SPQ Cog-Per", "SPQ Interp", "SPQ Disorg",
+            "CAPS", "PDI", "MDQ", "PHQ-9"),
+  tmin  = c(0, 0, 0, 0, 0, 0, 0, 0),
+  tmax  = c(296, 132, 132, 64, 32, 21, 13, 27),
+  stringsAsFactors = FALSE
+)
+q_pal <- c(
+  SPQ = "#2630F5", `SPQ Cog-Per` = "#3A0CA3", `SPQ Interp` = "#7209B7",
+  `SPQ Disorg` = "#4CC9F0", CAPS = "#E76F51", PDI = "#FF006E",
+  MDQ = "#06D6A0", `PHQ-9` = "#FFB703")
+q_core <- c("spq_total", "spq_cogper", "spq_interp", "spq_disorg",
+            "caps_total", "pdi_total")
+q_density_vars <- intersect(unique(c(q_vars, unlist(Q_GROUPS))),
+                            names(add_spq_factors(data)))
+q_per_id <- data %>%
+  distinct(participant_id, .keep_all = TRUE) %>%
+  add_spq_factors() %>%
+  select(participant_id, all_of(q_density_vars)) %>%
+  mutate(across(all_of(q_density_vars), ~ suppressWarnings(as.numeric(.x))))
+
+make_q_heatmap <- function(vars) {
+  meta <- dplyr::filter(q_meta, var %in% vars)
+  lab_levels  <- meta$label
+  label_map_q <- setNames(meta$label, meta$var)
+
+  nq <- length(vars)
+  r_mat <- matrix(NA_real_, nq, nq, dimnames = list(vars, vars))
+  p_mat <- matrix(NA_real_, nq, nq, dimnames = list(vars, vars))
+  for (i in seq_len(nq)) for (j in seq_len(nq)) {
+    if (i == j) { r_mat[i, j] <- 1; next }
+    x <- q_per_id[[vars[i]]]; y <- q_per_id[[vars[j]]]
+    ok <- is.finite(x) & is.finite(y)
+    if (sum(ok) >= 3) {
+      ct <- suppressWarnings(cor.test(x[ok], y[ok]))
+      r_mat[i, j] <- unname(ct$estimate); p_mat[i, j] <- ct$p.value
+    }
+  }
+
+  col_lab <- function(lab)
+    sprintf("<span style='color:%s'>**%s**</span>", q_pal[lab], lab)
+  lab_levels_md  <- col_lab(lab_levels)
+  lab_levels_mdr <- col_lab(rev(lab_levels))
+
+  corr_df <- expand.grid(var_x = vars, var_y = vars, stringsAsFactors = FALSE) %>%
+    as_tibble() %>%
+    mutate(
+      r     = purrr::map2_dbl(var_x, var_y, ~ r_mat[.x, .y]),
+      p     = purrr::map2_dbl(var_x, var_y, ~ p_mat[.x, .y]),
+      lab_x = dplyr::recode(var_x, !!!label_map_q),
+      lab_y = dplyr::recode(var_y, !!!label_map_q),
+      ix    = match(lab_x, lab_levels),
+      iy    = match(lab_y, lab_levels)
+    ) %>%
+    filter(iy >= ix) %>%
+    mutate(
+      sig    = dplyr::case_when(is.na(p) ~ "", p < 0.001 ~ "***",
+                                p < 0.01 ~ "**", p < 0.05 ~ "*", TRUE ~ ""),
+      r_text = ifelse(var_x == var_y, "", sprintf("%.2f", r)),
+      lab_x  = factor(col_lab(lab_x), levels = lab_levels_md),
+      lab_y  = factor(col_lab(lab_y), levels = lab_levels_mdr)
+    )
+
+  ggplot(corr_df, aes(x = lab_x, y = lab_y, fill = r)) +
+    geom_tile(color = "white", linewidth = 1.1) +
+    geom_text(aes(label = r_text), size = 8.6, fontface = "bold", vjust = 0.5) +
+    geom_text(aes(label = sig), size = 8, vjust = -0.9, color = "grey20") +
+    scale_fill_gradient2(limits = c(-1, 1), midpoint = 0, low = "#9ECAE1",
+                         mid = "white", high = "#FDAE6B", na.value = "grey95",
+                         name = "r") +
+    coord_fixed() +
+    labs(x = NULL, y = NULL) +
+    theme_minimal(base_size = 24) +
+    theme(panel.grid = element_blank(),
+          axis.text.x = ggtext::element_markdown(size = 24, angle = 45, hjust = 1),
+          axis.text.y = ggtext::element_markdown(size = 24),
+          legend.position = "inside",
+          legend.position.inside = c(0.97, 0.97),
+          legend.justification = c(1, 1),
+          legend.key.height = unit(1.6, "lines"),
+          legend.text = element_text(size = 20, colour = "black"),
+          legend.title = element_text(size = 21, colour = "black"),
+          plot.margin = margin(8, 8, 8, 8))
+}
+```
+
+```{r breakpoint-objects-setup, include=FALSE}
+# breakpoint_combined() used by the average-breakpoint lines figure below.
+source(here::here("analysis", "plotting", "breakpoint_combined.R"))
+```
+
+```{r yuen-legend, fig.width=8, fig.height=1.0}
+grid::grid.newpage(); grid::grid.draw(yuen_legend)
+```
+
+## Distributions + explosions + block comparisons (full stitched figure)
+
+The pumps distributions (top), explosions by condition (middle), and the Yuen
+trimmed-mean block comparisons (bottom) stacked into one figure, with a SINGLE
+shared pre-/post-reversal/control legend at the very bottom (every panel's own
+legend is suppressed so it is never duplicated).
+
+```{r dist-expl-yuen-stacked, fig.width=15, fig.height=18, dpi=400}
+# Reuse: .h_leg (histograms, carries the one legend), expl_plot (legend off),
+# and the Yuen panels. DROP the Yuen fill guide at the scale level (guides(fill =
+# "none")) — not just legend.position — because the collected `&` theme below
+# forces legend.position = "bottom" on every panel, which would otherwise revive
+# a second Yuen legend. With the guide removed, only the histogram key is
+# collected, so pre/post/control appears exactly once.
+.yuen_adj_nl <- yuen_adj$plot + coord_cartesian(ylim = .yrng) + .yuen_axis +
+  guides(fill = "none", colour = "none")
+.yuen_all_nl <- yuen_all$plot + coord_cartesian(ylim = .yrng) + .yuen_axis +
+  guides(fill = "none", colour = "none")
+.yuen_row <- (.yuen_adj_nl | .yuen_all_nl)
+
+full_stack <- ((.h_leg$plot + .dist_axis) / expl_plot / .yuen_row) +
+  plot_layout(heights = c(1, 1, 1.25), guides = "collect") &
+  theme(text = element_text(family = "Arial"),
+        legend.position = "bottom",
+        legend.text = element_text(size = 20, family = "Arial", face = "bold"),
+        legend.title = element_blank(),
+        legend.key.size = unit(1.5, "lines"))
+
+.pf_save(full_stack, "pumps_explosions_yuen_stacked", width = 15, height = 18,
+         dpi = 400)
+full_stack
+```
+
+
+
+### SPQ / CAPS / PDI — comprehensive (paper)
+
+```{r q-paper-comprehensive, fig.width=24, fig.height=15}
+# Larger axis titles than the shared .bold_axis (12pt) for the enlarged,
+# Word-bound comprehensive panel.
+.pc_axis <- theme(
+  axis.title.x = element_text(family = "Arial", face = "bold", size = 26),
+  axis.title.y = element_text(family = "Arial", face = "bold", size = 26))
+
+# Wider/taller card with a bigger font and more breathing room between rows.
+.pc_card <- q_stats_card(q_per_id, Q_GROUPS$paper_core, base_text = 9.6,
+                         row_gap = 1.45) +
+  ggtitle("A  Descriptive statistics") +
+  theme(plot.title = element_text(face = "bold", size = 30, hjust = 0),
+        plot.margin = margin(2, 4, 2, 4))
+
+.pc_heat <- make_q_heatmap(q_core) +
+  ggtitle("B  Intercorrelations") +
+  theme(plot.title = element_text(face = "bold", size = 30, hjust = 0),
+        plot.margin = margin(2, 4, 2, 4))
+
+# Thicker density lines (line_size) + trimmed right-hand x-axis expansion so the
+# curves run further toward the right edge (less dead space past 100%).
+.pc_dens <- q_density(q_per_id, Q_GROUPS$paper_core, label_pos = "top",
+                      caption = NA, base_size = 26, label_size = 7.8,
+                      line_size = 2.6) + .pc_axis +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2),
+                     labels = scales::percent_format(accuracy = 1),
+                     expand = expansion(mult = c(0.01, 0.005))) +
+  ggtitle("C  Score distributions") +
+  theme(plot.title = element_text(face = "bold", size = 30, hjust = 0),
+        plot.margin = margin(2, 4, 2, 4))
+
+# Top row: card wider than the square (coord_fixed) heatmap so panel A is large,
+# while the top row is tall enough that the heatmap cells render large. Tight
+# plot margins pull the panels together (less whitespace); the bottom row keeps a
+# taller share so the score distributions stretch vertically.
+.pc_top <- (.pc_card | .pc_heat) + plot_layout(widths = c(1.5, 1))
+
+.pc_comprehensive <- (.pc_top / .pc_dens +
+   plot_layout(heights = c(1.15, 1.35)) &
+   theme(plot.margin = margin(2, 6, 2, 6))) +
+  # a tiny outer margin so there's a smidge of whitespace around the figure
+  # border (plot_annotation targets the whole composition, not each sub-panel).
+  plot_annotation(theme = theme(plot.margin = margin(12, 14, 12, 14)))
+
+.pf_save(.pc_comprehensive, "spq_caps_pdi_comprehensive", width = 24, height = 15)
+.pc_comprehensive
+```
+
+
+### Combined — average-breakpoint lines 
+
+```{r breakpoint-combined-lines, fig.width=16, fig.height=6}
+.bp_lines <- breakpoint_combined(data, BAL_COLS, family = "Arial",
+                                 base_size = 13, mode = "lines")
+.pf_save(.bp_lines, "breakpoints_reversal_control_lines", width = 16, height = 6)
+.bp_lines
+```
+
+## Combined: Scores × Behavior (pumps + explosions)
+
+```{r combined-scatter-setup, include=FALSE}
+source(here::here("analysis", "plotting", "inflation_regression.R"))
+q_recode <- c(spq_total = "SPQ Total", pdi_total = "PDI Total",
+              caps_total = "CAPS Total")
+
+reg_res <- run_inflation_questionnaire_regressions(
+  data,
+  questionnaires = c(spq_total = "SPQ Total", pdi_total = "PDI Total",
+                     caps_total = "CAPS Total"),
+  colors = c(b = "Blue (pre-reversal)", o = "Orange (post-reversal)",
+             p = "Pink (control)"))
+
+scatter_df <- reg_res$data %>%
+  pivot_longer(cols = all_of(names(q_recode)), names_to = "q_col",
+               values_to = "q_val") %>%
+  mutate(q_label = recode(q_col, !!!q_recode),
+         Condition = factor(recode(color_code, b = "pre reversal",
+                                   o = "post reversal", p = "control"),
+                            levels = c("pre reversal", "post reversal", "control"))) %>%
+  filter(is.finite(adj_infl), is.finite(q_val))
+
+expl_scatter_df <- data %>%
+  filter(balloon_color %in% c("b", "o", "p"),
+         balloon_color != "b" | trial_number < 91,
+         balloon_color != "o" | trial_number > 90) %>%
+  mutate(.pop = is_popped(popped)) %>%
+  group_by(participant_id, balloon_color) %>%
+  summarise(n_expl = sum(.pop, na.rm = TRUE), .groups = "drop") %>%
+  left_join(data %>% distinct(participant_id, .keep_all = TRUE) %>%
+              select(participant_id, all_of(names(q_recode))),
+            by = "participant_id") %>%
+  pivot_longer(cols = all_of(names(q_recode)), names_to = "q_col",
+               values_to = "q_val") %>%
+  mutate(q_label = recode(q_col, !!!q_recode),
+         Condition = factor(recode(balloon_color, b = "pre reversal",
+                                   o = "post reversal", p = "control"),
+                            levels = c("pre reversal", "post reversal", "control"))) %>%
+  filter(is.finite(n_expl), is.finite(q_val))
+
+scatter_cols <- c("pre reversal"  = unname(BAL_COLS["Blue"]),
+                  "post reversal" = unname(BAL_COLS["Orange"]),
+                  "control"       = unname(BAL_COLS["Pink"]))
+```
+
+```{r combined-scatter, fig.width=12, fig.height=8}
+combined_sc <- bind_rows(
+  scatter_df %>% transmute(q_label, q_val, Condition,
+                           value = adj_infl, measure = "Average adjusted pumps"),
+  expl_scatter_df %>% transmute(q_label, q_val, Condition,
+                                value = n_expl, measure = "Number of explosions")) %>%
+  mutate(measure = factor(measure, levels = c("Average adjusted pumps",
+                                              "Number of explosions")),
+         q_label = factor(q_label, levels = c("SPQ Total", "PDI Total", "CAPS Total")))
+
+sig_df <- combined_sc %>%
+  group_by(measure, q_label) %>%
+  summarise(p = tryCatch(cor.test(q_val, value)$p.value,
+                         error = function(e) NA_real_), .groups = "drop") %>%
+  mutate(lab = dplyr::case_when(is.na(p) ~ "", p < .001 ~ "***", p < .01 ~ "**",
+                                p < .05 ~ "*", TRUE ~ "NS"))
+
+.scatter_fig <- ggplot(combined_sc, aes(x = q_val, y = value, colour = Condition)) +
+  geom_point(alpha = 0.5, size = 2.6, shape = 16) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.4, formula = y ~ x) +
+  geom_text(data = sig_df, aes(x = -Inf, y = Inf, label = lab),
+            inherit.aes = FALSE, hjust = -0.35, vjust = 1.5,
+            size = 6.5, fontface = "bold", colour = "grey20") +
+  scale_colour_manual(values = scatter_cols, name = NULL) +
+  facet_grid(measure ~ q_label, scales = "free", switch = "x") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 17) +
+  theme(legend.position = "bottom",
+        strip.placement = "outside",
+        strip.text = element_text(face = "bold", size = 15),
+        panel.grid.minor = element_blank(),
+        panel.spacing = unit(1, "lines"))
+.pf_save(.scatter_fig, "scores_by_behavior_scatter", width = 12, height = 8)
+.scatter_fig
+```
+
+# Section 2 — Computational
+
+
+## Model Comparison (LOOIC)
+Same as paper
+
+```{r looic-tables, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+suppressPackageStartupMessages(library(here))
+source(here::here("analysis","05_looic_comparison.R"))
+
+.loo_cache <- here::here("output","model_comparison","looic_results_new_fits.rds")
+if (file.exists(.loo_cache)) {
+  loo_res <- readRDS(.loo_cache)
+} else {
+  list2env(readRDS(here::here("mcmc","model_fits_list.rds")), envir = environment())
+  loo_res <- looic_compare_all()
+  saveRDS(loo_res, .loo_cache)
+}
+loo_comb <- build_looic_combined(loo_res)
+
+loo_tbl <- loo_comb %>%
+  dplyr::transmute(
+    Condition, Model,
+    LOOIC        = sprintf("%.1f", LOOIC),
+    `ΔLOOIC`     = ifelse(`ΔLOOIC` == 0, "0 (best)",
+                          sprintf("%.1f ± %.1f", `ΔLOOIC`, dLOOIC_se)),
+    `LOO weight` = sprintf("%.2f", `LOO weight`),
+    `Max Pareto k` = sprintf("%.2f", `Max Pareto k`)
+  )
+
+best_rows <- which(loo_comb$`ΔLOOIC` == 0)
+
+loo_tbl %>%
+  dplyr::select(-Condition) %>%
+  kableExtra::kbl(align = c("l", "r", "r", "r", "r"),
+                  caption = "Model comparison by condition (LOOIC).") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                            full_width = FALSE, position = "center") %>%
+  kableExtra::row_spec(best_rows, bold = TRUE) %>%
+  kableExtra::pack_rows("Blue — pre-reversal",  1, 3) %>%
+  kableExtra::pack_rows("Orange — post-reversal", 4, 6) %>%
+  kableExtra::pack_rows("Pink — control",       7, 9) %>%
+  print()
+```
+
+## Parameter recovery — reversal + control 
+
+```{r param-recovery-setup, include=FALSE}
+source(here::here("analysis", "plotting", "ewmv_recovery_plot.R"))
+rec_grid_noyellow <- ewmv_recovery_grid(conds = c("blue", "orange", "pink"),
+                                        family = "Arial", base_size = 22)
+```
+
+```{r param-recovery-grid-noyellow, fig.width=16, fig.height=10.5, results='asis'}
+if (is.null(rec_grid_noyellow)) {
+  cat("*Recovery fits not found.*\n\n")
+} else {
+  .pf_save(rec_grid_noyellow$grid, "parameter_recovery_grid",
+           width = 16, height = 10.5)
+  print(rec_grid_noyellow$grid)
+}
+```
+
+## Model diagnostics
+
+```{r model-diagnostics, results='asis'}
+.gl_diag <- function(fit, model, cond) {
+  v  <- dimnames(fit$draws())$variable
+  gl <- grep("^(mu_|sigma_|sigma\\[|sigma$)", v, value = TRUE)
+  s  <- posterior::summarise_draws(fit$draws(variables = gl),
+                                   "rhat", "ess_bulk", "ess_tail")
+  data.frame(
+    Model = model, Condition = cond,
+    `Group params`  = nrow(s),
+    `Max R-hat`      = sprintf("%.3f", max(s$rhat, na.rm = TRUE)),
+    `Min ESS (bulk)` = sprintf("%.0f", min(s$ess_bulk, na.rm = TRUE)),
+    `Min ESS (tail)` = sprintf("%.0f", min(s$ess_tail, na.rm = TRUE)),
+    check.names = FALSE)
+}
+.diag_tbl <- do.call(rbind, list(
+  .gl_diag(ewmv_blue,    "EWMV", "Blue (pre-reversal)"),
+  .gl_diag(stl_blue,     "STL",  "Blue (pre-reversal)"),
+  .gl_diag(fourpar_blue, "4PAR", "Blue (pre-reversal)"),
+  .gl_diag(ewmv_orange,  "EWMV", "Orange (post-reversal)"),
+  .gl_diag(stl_orange,   "STL",  "Orange (post-reversal)"),
+  .gl_diag(fourpar_orange,"4PAR", "Orange (post-reversal)"),
+  .gl_diag(ewmv_pink,    "EWMV", "Pink (control)"),
+  .gl_diag(stl_pink,     "STL",  "Pink (control)"),
+  .gl_diag(fourpar_pink, "4PAR", "Pink (control)")))
+
+dir.create(here::here("output", "model_comparison"), recursive = TRUE,
+           showWarnings = FALSE)
+write.csv(.diag_tbl,
+          here::here("output", "model_comparison", "model_diagnostics_table.csv"),
+          row.names = FALSE)
+
+.diag_tbl %>%
+  dplyr::select(-Condition) %>%
+  kableExtra::kbl(align = c("l", "r", "r", "r", "r"),
+                  caption = paste("Group-level MCMC diagnostics by model and",
+                                  "condition (mu_* and sigma parameters).")) %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                            full_width = FALSE, position = "center") %>%
+  kableExtra::pack_rows("Blue — pre-reversal",    1, 3) %>%
+  kableExtra::pack_rows("Orange — post-reversal", 4, 6) %>%
+  kableExtra::pack_rows("Pink — control",         7, 9)
+```
+
+## Bayesian group-level contrasts
+
+```{r bayesian-contrasts-setup, include=FALSE}
+source(here::here("analysis", "plotting", "bayesian_block_contrasts.R"))
+source(here::here("analysis", "plotting", "bayesian_contrasts_variants.R"))
+
+contrasts_ewmv <- .bayesian_group_contrasts(
+  ewmv_blue, ewmv_orange, ewmv_pink,
+  group_params = c("mu_phi", "mu_eta", "mu_rho", "mu_tau", "mu_lambda"),
+  param_labels = c(mu_phi = "Prior Weight (&psi;)",
+                   mu_eta = "Updating Exponent (&xi;)",
+                   mu_rho = "Risk Preference (&rho;)",
+                   mu_tau = "Inverse Temperature (&tau;)",
+                   mu_lambda = "Loss Aversion (&lambda;)"))
+contrasts_stl <- .bayesian_group_contrasts(
+  stl_blue, stl_orange, stl_pink,
+  group_params = c("mu_vwin", "mu_vloss", "mu_beta", "mu_omegaone"),
+  param_labels = c(mu_vwin = "Reward Learning Rate (v<sub>win</sub>)",
+                   mu_vloss = "Loss Learning Rate (v<sub>loss</sub>)",
+                   mu_beta = "Behavioural Consistency (&beta;)",
+                   mu_omegaone = "Initial Pump Target (&omega;<sub>1</sub>)"))
+contrasts_fourpar <- .bayesian_group_contrasts(
+  fourpar_blue, fourpar_orange, fourpar_pink,
+  group_params = c("mu_phi", "mu_eta", "mu_gam", "mu_tau"),
+  param_labels = c(mu_phi = "Prior Weight (&phi;)",
+                   mu_eta = "Updating Exponent (&eta;)",
+                   mu_gam = "Risk/Curvature (&gamma;)",
+                   mu_tau = "Inverse Temperature (&tau;)"))
+
+# all contrast/sweep exports go to the single shared paper-figures folder
+.ec_dir <- PF_DIR
+```
+
+
+### Parameter - Condition Contrasts table
+
+```{r contrasts-table}
+.format_contrasts_kable(
+  list(EWMV = contrasts_ewmv, STL = contrasts_stl, `4PAR` = contrasts_fourpar))
+```
+
+### Parameter sweeps over contrasts (boxed, paired by parameter)
+
+For each EWMV parameter, the standardized line-graph sweep sits in a clean
+bordered box (top row) with the **parameter name above it**, directly above its
+group-level contrast box (bottom row, no duplicate name). Columns are ordered
+ψ, ξ, ρ, λ, τ at the same standardized width.
+
+```{r param-sweep-contrast-grid-setup, include=FALSE}
+source(here::here("analysis", "plotting", "ewmv_param_sweeps.R"))
+
+# parameter (contrast group_param)  ->  matching sweep line-graph
+.pair_map <- c(mu_phi = "ewmv_psi", mu_eta = "ewmv_xi", mu_rho = "ewmv_rho",
+               mu_lambda = "ewmv_lambda", mu_tau = "ewmv_tau")
+# HTML parameter names that go ABOVE each line graph (same text as the contrast
+# strips), so the contrast box below can drop its own strip.
+.pair_titles <- c(mu_phi = "Prior Weight (&psi;)",
+                  mu_eta = "Updating Exponent (&xi;)",
+                  mu_rho = "Risk Preference (&rho;)",
+                  mu_lambda = "Loss Aversion (&lambda;)",
+                  mu_tau = "Inverse Temperature (&tau;)")
+
+# Bigger overall so it stays readable when shrunk into a Word doc.
+.grid_base  <- 25   # line-graph base font
+.grid_cbase <- 31   # contrast-box base font (its x-axis numbers)
+# Horizontal gutter added to each column so there's clear space between every
+# parameter/contrast pair.
+.grid_gut <- 16
+
+# Contrast boxes WITHOUT their own strip (the name moves to the line graph).
+.grid_cbox <- contrasts_boxes_nolabels(contrasts_ewmv, base_size = .grid_cbase,
+                                       family = "Arial", strip = FALSE)
+
+# Put the "Posterior mean difference (95% CI)" x-axis title under ONLY the Risk
+# Preference (mu_rho) contrast box, in the same style/size as the box's numbers.
+.grid_cbox$mu_rho <- .grid_cbox$mu_rho +
+  labs(x = "Posterior mean difference (95% CI)") +
+  theme(axis.title.x = element_text(size = .grid_cbase, family = "Arial",
+                                    face = "bold", colour = "black",
+                                    margin = margin(t = 6)))
+
+# Add condition-contrast row labels to the LEFT of the leftmost (Prior Weight,
+# mu_phi) contrast box only, in shorthand (con/post/pre). Each row is a pairwise
+# difference; map the full factor levels to the abbreviated form so they stay
+# aligned to the correct rows regardless of plotting order.
+.cond_short <- c("Control − Post-reversal"      = "con − post",
+                 "Control − Pre-reversal"       = "con − pre",
+                 "Post-reversal − Pre-reversal" = "post − pre")
+.grid_cbox$mu_phi <- .grid_cbox$mu_phi +
+  scale_y_discrete(labels = .cond_short) +
+  theme(axis.text.y  = element_text(size = .grid_cbase, family = "Arial",
+                                    face = "bold", colour = "black",
+                                    hjust = 1),
+        axis.ticks.y = element_line(colour = "black"))
+
+# Side gutters on every contrast box -> horizontal space between column pairs.
+.grid_cbox <- lapply(.grid_cbox, function(p)
+  p + theme(plot.margin = margin(8, .grid_gut, 8, .grid_gut)))
+
+# The two ψ/ξ line graphs share one y-axis title ("Believed explosion
+# probability") and the two ρ/λ graphs share one ("Utility of pumping"), so the
+# repeated title is dropped from the second column of each pair (ξ and λ). The
+# y-axis ticks/numbers stay (the scales differ). τ keeps its own title.
+.grid_drop_ytitle <- c("mu_eta", "mu_lambda")
+
+# Build one combined grid from a given sweeps object (default vs mono colouring).
+# Line-graph numbers (tick_size) match the contrast-box numbers (.grid_cbase);
+# parameter name (title) and axis titles are quite a bit larger.
+.build_sweep_grid <- function(swp) {
+  boxed <- lapply(names(.pair_map), function(gp) {
+    # Column 1's width is set by the wide condition labels on the contrast box
+    # below, which leaves a big gap to the LEFT of the psi line graph's y-title.
+    # A negative LEFT plot margin on that line graph shifts its whole left-axis
+    # assembly toward the panel, pulling "Believed explosion probability" right
+    # to sit near the tick numbers (without clipping it).
+    lpm <- if (gp == "mu_phi") -55 else .grid_gut
+    p <- sweep_to_box(swp[[.pair_map[[gp]]]], base_size = .grid_base,
+                      family = "Arial", title = .pair_titles[[gp]],
+                      title_size = .grid_base + 5, axis_size = .grid_base + 5,
+                      tick_size = .grid_cbase, legend_size = .grid_base) +
+      theme(plot.margin = margin(6, .grid_gut, 6, lpm))
+    if (gp %in% .grid_drop_ytitle) p <- p + labs(y = NULL)
+    p
+  })
+  names(boxed) <- names(.pair_map)
+  ccol <- .grid_cbox[names(.pair_map)]
+  # ONE flat 5-col x 3-row wrap (line graphs / spacers / contrast boxes). Building
+  # it as a single wrap_plots (not nested rows) makes patchwork align the panels
+  # column-by-column, so each line-graph box ends up the SAME width as the
+  # contrast box beneath it (despite the line graph carrying a left y-axis). The
+  # middle spacer row adds vertical air between the two.
+  spacers <- replicate(5, patchwork::plot_spacer(), simplify = FALSE)
+  patchwork::wrap_plots(c(boxed, spacers, ccol), ncol = 5, byrow = TRUE,
+                        heights = c(1, 0.06, 1))
+}
+
+.swp_default <- ewmv_param_sweeps(family = "Arial", base_size = .grid_base)
+.swp_mono    <- ewmv_param_sweeps(family = "Arial", base_size = .grid_base,
+                                  mono_option = "viridis")
+
+.grid_default <- .build_sweep_grid(.swp_default)
+.grid_mono    <- .build_sweep_grid(.swp_mono)
+
+for (nm in c("default", "mono"))
+  .pf_save(if (nm == "default") .grid_default else .grid_mono,
+           paste0("ewmv_sweep_contrast_grid_", nm), width = 33, height = 13.5)
+```
+
+
+
+```{r param-sweep-contrast-grid-mono, fig.width=33, fig.height=13.5}
+.grid_mono
+```
+
+## Computational model parameter figures (line graphs, separate)
+
+```{r param-sweeps-setup, include=FALSE}
+source(here::here("analysis", "plotting", "ewmv_param_sweeps.R"))
+.sweeps <- ewmv_param_sweeps(family = "Arial", base_size = 13,
+                             mono_option = "viridis")
+
+# all line graphs as separate, same-size images (into the shared paper folder)
+.sweep_names <- c("ewmv_xi", "ewmv_psi", "ewmv_lambda", "ewmv_rho", "ewmv_tau")
+for (nm in .sweep_names)
+  .pf_save(.sweeps[[nm]] + .bold_axis, nm, width = 5.5, height = 4.8)
+```
+
+### EWMV — Belief updating: ξ (updating exponent)
+
+```{r sweep-xi, fig.width=5.5, fig.height=4.8}
+.sweeps$ewmv_xi + .bold_axis
+```
+
+### EWMV — Belief updating: ψ (prior weight)
+
+```{r sweep-psi, fig.width=5.5, fig.height=4.8}
+.sweeps$ewmv_psi + .bold_axis
+```
+
+### EWMV — Utility / pumping probability: λ (loss aversion)
+
+```{r sweep-lambda, fig.width=5.5, fig.height=4.8}
+.sweeps$ewmv_lambda + .bold_axis
+```
+
+### EWMV — Utility / pumping probability: ρ (risk preference)
+
+```{r sweep-rho, fig.width=5.5, fig.height=4.8}
+.sweeps$ewmv_rho + .bold_axis
+```
+
+### EWMV — Utility / pumping probability: τ (inverse temperature)
+
+```{r sweep-tau, fig.width=5.5, fig.height=4.8}
+.sweeps$ewmv_tau + .bold_axis
+```
+
+## EWMV × questionnaires (correlation heatmap)
+
+```{r ewmv-cutdown-setup, include=FALSE}
+source(here::here("analysis", "plotting", "ewmv_cutdown_heatmap.R"))
+```
+
+```{r ewmv-cutdown-main, fig.width=18, fig.height=9}
+.ewmv_cutdown <- ewmv_cutdown_heatmap(base_size = 19, family = "Arial",
+                                      cell_mult = 0.38)
+.pf_save(.ewmv_cutdown, "ewmv_questionnaire_heatmap_pearson",
+         width = 18, height = 9)
+.ewmv_cutdown
+```
+
+## Steiger / Williams: pre- vs post-reversal trait associations
+
+```{r steiger-byblock-setup, include=FALSE}
+source(here::here("analysis", "plotting", "ewmv_pre_post_spearman.R"))
+# Data-driven: the EWMV param x trait pairs Holm-significant in pre OR post
+# reversal in the data.
+steiger_pres <- ewmv_steiger_auto(
+  pairs = ewmv_prepost_sig_pairs(adjust = "holm"), base_size = 20, family = "Arial")
+```
+
+```{r steiger-byblock-fig, fig.width=12, fig.height=5.5}
+.steiger_pres_fig <- steiger_pres$plot + .bold_axis
+.pf_save(.steiger_pres_fig, "steiger_prepost_prespecified",
+         width = 12, height = 5.5)
+.steiger_pres_fig
+```
+
+```{r steiger-byblock-table}
+steiger_pres$table %>%
+  kableExtra::kbl(align = c("l", "l", "c", "c", "c", "c", "c", "c"),
+    caption = "Steiger/Williams dependent-correlation tests (pre- vs post-reversal) for the EWMV parameter × trait pairs Holm-significant in either phase.") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                            full_width = FALSE, font_size = 13)
+```
+
+
+## Robustness checks — leave-one-participant-out checks + posterior propagation
+
+For every correlation significant (Holm-corrected, *p* < .05) in the full
+sample, per condition:
+
+1. LOO participant correlation recompute - each participant is dropped in
+   turn, the focal correlation recomputed on *n* − 1, and the **same** Holm
+   correction re-run (all three conditions for that parameter × questionnaire)
+   so the focal cell's Holm-adjusted *p* can be re-read. Reported: full-sample
+   *r*, the min/max LOO *r*, the largest Holm-adjusted *p* across removals,
+   whether Holm significance ever flips, and the most influential participant
+   (largest |Δr|).
+2. **Posterior propagation** — using the subject-level posterior draws from the
+   cmdstanr fits, the correlation is recomputed at every draw (the
+   participant-parameter vector at that draw vs the fixed trait scores);
+   reported: posterior-*r* median and 95% interval.
+
+A correlation **survives** iff it stays Holm-significant across *all* LOO drops
+**and** its posterior-*r* 95% interval excludes zero; otherwise it is
+**fragile**.
+
+```{r robustness-run, include=FALSE}
+source(here::here("analysis", "plotting", "ewmv_trait_robustness.R"))
+.rob <- ewmv_trait_robustness(verbose = FALSE)
+write.csv(.rob$table,
+          file.path(PF_DIR, "ewmv_trait_robustness_table.csv"),
+          row.names = FALSE)
+```
+
+```{r robustness-table}
+.robustness_display(.rob$table) %>%
+  kableExtra::kbl(align = "l",
+    caption = "EWMV trait–parameter correlation robustness: leave-one-out jackknife and posterior propagation, per significant correlation.") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                            full_width = FALSE, font_size = 11) %>%
+  kableExtra::row_spec(which(.rob$table$survives), bold = TRUE,
+                       background = "#EAF7EA")
+```
+
+```{r robustness-summary, results='asis'}
+cat("```\n", .rob$summary, "\n```\n", sep = "")
+```
+
+
+
+## Summary — concise table + figure
+
+A single at-a-glance table and forest plot of all Holm-significant EWMV
+trait–parameter correlations and how they fare under both robustness checks.
+
+```{r robustness-compact-table}
+ewmv_robustness_compact(.rob$table) %>%
+  kableExtra::kbl(align = c("l", "c", "c", "c", "c", "c"),
+    caption = "Robustness at a glance: full-sample r, leave-one-out r range, and posterior-r 95% interval for every Holm-significant EWMV parameter × questionnaire correlation. Survivors (Holm-significant across all LOO drops and posterior-r interval excluding zero) are listed first.") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                            full_width = FALSE, font_size = 12) %>%
+  kableExtra::row_spec(which(ewmv_robustness_compact(.rob$table)$Verdict == "Survives"),
+                       bold = TRUE, background = "#EAF7EA")
+```
+
+```{r robustness-forest, fig.width=12, fig.height=5}
+.rob_forest <- ewmv_robustness_forest(.rob$table, base_size = 14, family = "Arial")
+.pf_save(.rob_forest, "ewmv_trait_robustness_forest", width = 12, height = 5)
+.rob_forest
+```
+
+```{r organize-figure-outputs, include=FALSE}
+.fig_map <- list(
+  "Figure_2_questionnaire_descriptives" = "spq_caps_pdi_comprehensive",
+  "Figure_3_balloon_breakpoints"        = "breakpoints_reversal_control_lines",
+  "Figure_4_pumps_explosions_blocks"    = "pumps_explosions_yuen_stacked",
+  "Figure_5_parameter_recovery"         = "parameter_recovery_grid",
+  "Figure_6_parameter_sweeps_contrasts" = c("ewmv_sweep_contrast_grid_mono",
+                                            "ewmv_psi", "ewmv_xi", "ewmv_rho",
+                                            "ewmv_lambda", "ewmv_tau"),
+  "Figure_7_trait_parameter_heatmap"    = "ewmv_questionnaire_heatmap_pearson",
+  "Supplementary"                       = c("scores_by_behavior_scatter",
+                                            "ewmv_sweep_contrast_grid_default",
+                                            "ewmv_trait_robustness_forest",
+                                            "ewmv_trait_robustness_table",
+                                            "steiger_prepost_prespecified",
+                                            "steiger_prepost_all_significant"))
+for (.sub in names(.fig_map)) {
+  .dest <- file.path(PF_DIR, .sub)
+  dir.create(.dest, showWarnings = FALSE, recursive = TRUE)
+  for (.b in .fig_map[[.sub]])
+    for (.f in list.files(PF_DIR, pattern = paste0("^", .b, "\\.[a-z]+$"),
+                          full.names = TRUE))
+      file.rename(.f, file.path(.dest, basename(.f)))
+}
+```

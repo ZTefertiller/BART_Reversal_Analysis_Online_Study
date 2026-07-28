@@ -1,0 +1,107 @@
+---
+title: "EWMV Parameter Recovery & Simulated Data"
+author: "Zach Tefertiller"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(ggplot2); library(kableExtra); library(here)
+})
+source(here("modeling", "ewmv", "simulate_ewmv.R"))
+source(here("analysis", "plotting", "ewmv_recovery_plot.R"))
+```
+
+# Overview
+
+We assess the EWMV model two ways:
+
+1. **Generative validity** — data simulated from the fitted parameters (on the real
+   fixed blue / pre-reversal breakpoints) should reproduce the observed behaviour.
+2. **Parameter recovery** — refitting the model to the simulated data should return
+   the parameters used to generate it. We do this for **realistic** parameters
+   (posterior means from the real fit) and for a **fully synthetic** block whose
+   parameters are drawn from the model's group prior.
+
+The simulator (`modeling/ewmv/simulate_ewmv.R`) reproduces the `ewmv_vec.stan`
+decision process exactly: a within-trial pumping probability
+`logistic(τ · u_pump)` with belief `p_burst` updated between trials by the
+EWMV learning rule.
+
+# Generative Validity (simulated vs. observed)
+
+```{r ppc, results='asis'}
+data <- read.csv(here("data", "processed", "filtered_data", "full_all_recruitments.csv"))
+blue <- data %>% filter(balloon_color == "b", trial_number < 91)
+
+sim_path <- here("mcmc", "ewmv_recovery", "sim_block_fitted.csv")
+if (file.exists(sim_path)) {
+  sim <- read.csv(sim_path)
+  smry <- function(df) df %>% group_by(participant_id) %>%
+    summarise(adj = mean(inflations[popped == 0], na.rm = TRUE),
+              burst = mean(popped), .groups = "drop")
+  ss <- smry(sim); rs <- smry(blue)
+  tibble(
+    Source = c("Observed (real)", "Simulated (EWMV)"),
+    `Mean adjusted pumps` = sprintf("%.2f (SD %.2f)",
+        c(mean(rs$adj, na.rm = TRUE), mean(ss$adj, na.rm = TRUE)),
+        c(sd(rs$adj, na.rm = TRUE),   sd(ss$adj, na.rm = TRUE))),
+    `Burst rate` = sprintf("%.2f", c(mean(rs$burst), mean(ss$burst)))
+  ) %>%
+    kbl(align = c("l", "c", "c"),
+        caption = "EWMV-simulated data vs. observed (blue / pre-reversal).") %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = FALSE, position = "center") %>%
+    print()
+} else {
+  cat("*Simulated block not generated yet ",
+      "(`mcmc/ewmv_recovery/sim_block_fitted.csv`).*\n\n")
+}
+```
+
+# Parameter Recovery — Realistic Parameters
+
+True parameters = posterior means from the real blue (pre-reversal) EWMV fit.
+Points are participants; the dashed line is identity, the grey line is the fit.
+
+```{r recovery-fitted, fig.width=14, fig.height=3.6, results='asis'}
+rec <- ewmv_recovery_report(here("mcmc", "ewmv_recovery", "recovery_fitted.csv"))
+if (is.null(rec)) {
+  cat("*Recovery not finished yet (`mcmc/ewmv_recovery/recovery_fitted.csv`).*\n\n")
+} else {
+  print(rec$plot)
+  rec$summary %>%
+    kbl(align = c("l", "c", "c"),
+        caption = "Parameter recovery correlations (realistic parameters).") %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = FALSE, position = "center") %>%
+    print()
+}
+```
+
+# Totally Simulated Block — Prior-Drawn Parameters
+
+A fully synthetic dataset whose parameters are drawn from the EWMV group prior
+(no dependence on the real data), then refit.
+
+```{r recovery-prior, fig.width=14, fig.height=3.6, results='asis'}
+recp <- ewmv_recovery_report(here("mcmc", "ewmv_recovery", "recovery_prior.csv"),
+                             dot_color = "#7209B7")
+if (is.null(recp)) {
+  cat("*Synthetic block not finished yet (`mcmc/ewmv_recovery/recovery_prior.csv`).*\n\n")
+} else {
+  print(recp$plot)
+  recp$summary %>%
+    kbl(align = c("l", "c", "c"),
+        caption = "Parameter recovery correlations (prior-drawn parameters).") %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = FALSE, position = "center") %>%
+    print()
+}
+```
