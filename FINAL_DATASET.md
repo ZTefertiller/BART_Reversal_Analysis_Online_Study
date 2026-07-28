@@ -20,8 +20,15 @@ ordered by `sub_id` (trial-level files by `sub_id`, `session`, `trial_number`).
   of the repo; the draws are available on OSF.
 
 ## Parameter recovery
-- `modeling/ewmv/run_ewmv_recovery.R` simulates from each condition's fitted
-  population and refits, writing `mcmc/ewmv_recovery/recovery_<condition>.csv`.
+- `modeling/run_recovery.R` covers all 9 model × condition cells: it draws true
+  parameters from the cell's population, simulates from that model's generative
+  process on the condition's fixed breakpoints, and refits, writing
+  `mcmc/recovery/recovery_<model>_<condition>.csv`.
+- Population parameters come from the real fits when they are present, and
+  otherwise are moment-matched to the per-participant posterior means in
+  `data_published/`, so recovery runs without the fit objects.
+- Simulators: `modeling/stl/simulate_stl.R`, `modeling/fourpar/simulate_fourpar.R`,
+  `modeling/ewmv/simulate_ewmv.R`. Report: `modeling/parameter_recovery.Rmd`.
 
 ## Model comparison
 - `output/model_comparison/` — LOOIC across models (EWMV preferred in all three

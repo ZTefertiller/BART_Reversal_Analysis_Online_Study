@@ -581,18 +581,18 @@ loo_tbl %>%
 ## Parameter recovery — reversal + control 
 
 ```{r param-recovery-setup, include=FALSE}
-source(here::here("analysis", "plotting", "ewmv_recovery_plot.R"))
-rec_grid_noyellow <- ewmv_recovery_grid(conds = c("blue", "orange", "pink"),
-                                        family = "Arial", base_size = 22)
+source(here::here("analysis", "plotting", "recovery_plot.R"))
+rec_grid_ewmv <- recovery_grid("ewmv", conds = c("blue", "orange", "pink"),
+                               family = "Arial", base_size = 22)
 ```
 
-```{r param-recovery-grid-noyellow, fig.width=16, fig.height=10.5, results='asis'}
-if (is.null(rec_grid_noyellow)) {
-  cat("*Recovery fits not found.*\n\n")
+```{r param-recovery-grid-ewmv, fig.width=16, fig.height=10.5, results='asis'}
+if (is.null(rec_grid_ewmv)) {
+  cat("*Recovery fits not found — run `Rscript modeling/run_recovery.R ewmv`.*\n\n")
 } else {
-  .pf_save(rec_grid_noyellow$grid, "parameter_recovery_grid",
+  .pf_save(rec_grid_ewmv$grid, "parameter_recovery_grid",
            width = 16, height = 10.5)
-  print(rec_grid_noyellow$grid)
+  print(rec_grid_ewmv$grid)
 }
 ```
 
