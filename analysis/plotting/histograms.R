@@ -20,9 +20,9 @@ generate_color_avg_histograms <- function(
   
   # --- 1. Sanity Checks and Column Selection ---
   
-  id_col <- "participant_id"
+  id_col <- "sub_id"
   if (!(id_col %in% names(data))) {
-    stop("Expected column 'participant_id' in `data`.")
+    stop("Expected column 'sub_id' in `data`.")
   }
   
   if (dv_mode == "adjusted") {

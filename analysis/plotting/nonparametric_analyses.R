@@ -34,13 +34,13 @@ generate_binned_anova_wrs2_yuend <- function(
   
   # ---------- required columns ----------
   need_adj <- c(
-    "participant_id",
+    "sub_id",
     "b1_avg_adj","b2_avg_adj","b3_avg_adj",
     "o4_avg_adj","o5_avg_adj","o6_avg_adj",
     "p1_avg_adj","p2_avg_adj","p3_avg_adj"
   )
   need_all <- c(
-    "participant_id",
+    "sub_id",
     "b1_avg","b2_avg","b3_avg",
     "o4_avg","o5_avg","o6_avg",
     "p1_avg","p2_avg","p3_avg"
@@ -48,7 +48,7 @@ generate_binned_anova_wrs2_yuend <- function(
   need <- switch(dv_mode,
                  adjusted   = need_adj,
                  all        = need_all,
-                 explosions = c("participant_id", "balloon_color",
+                 explosions = c("sub_id", "balloon_color",
                                 "trial_number", "popped"))
   miss <- setdiff(need, names(data))
   if (length(miss)) stop("Missing required columns: ", paste(miss, collapse = ", "))
@@ -56,9 +56,9 @@ generate_binned_anova_wrs2_yuend <- function(
   # ---------- select wide per-participant means ----------
   if (dv_mode == "adjusted") {
     sel <- data %>%
-      distinct(participant_id, .keep_all = TRUE) %>%
+      distinct(sub_id, .keep_all = TRUE) %>%
       select(
-        participant_id,
+        sub_id,
         b1 = b1_avg_adj, b2 = b2_avg_adj, b3 = b3_avg_adj,
         o4 = o4_avg_adj, o5 = o5_avg_adj, o6 = o6_avg_adj,
         p1 = p1_avg_adj, p2 = p2_avg_adj, p3 = p3_avg_adj
@@ -66,9 +66,9 @@ generate_binned_anova_wrs2_yuend <- function(
     y_lab <- "Adjusted pumps"
   } else if (dv_mode == "all") {
     sel <- data %>%
-      distinct(participant_id, .keep_all = TRUE) %>%
+      distinct(sub_id, .keep_all = TRUE) %>%
       select(
-        participant_id,
+        sub_id,
         b1 = b1_avg, b2 = b2_avg, b3 = b3_avg,
         o4 = o4_avg, o5 = o5_avg, o6 = o6_avg,
         p1 = p1_avg, p2 = p2_avg, p3 = p3_avg
@@ -82,22 +82,22 @@ generate_binned_anova_wrs2_yuend <- function(
     sel <- data %>%
       filter(balloon_color %in% c("b", "o", "p")) %>%
       mutate(.pop = is_pop(popped)) %>%
-      arrange(participant_id, balloon_color, trial_number) %>%
-      group_by(participant_id, balloon_color) %>%
+      arrange(sub_id, balloon_color, trial_number) %>%
+      group_by(sub_id, balloon_color) %>%
       mutate(.blk = ceiling(row_number() / 10)) %>%
       ungroup() %>%
       mutate(cell = paste0(balloon_color, .blk)) %>%
       filter(cell %in% c("b1","b2","b3","o4","o5","o6","p1","p2","p3")) %>%
-      group_by(participant_id, cell) %>%
+      group_by(sub_id, cell) %>%
       summarise(n_pop = sum(.pop, na.rm = TRUE), .groups = "drop") %>%
       pivot_wider(names_from = cell, values_from = n_pop) %>%
-      select(participant_id, b1, b2, b3, o4, o5, o6, p1, p2, p3)
+      select(sub_id, b1, b2, b3, o4, o5, o6, p1, p2, p3)
     y_lab <- "Explosions"
   }
   
   # ---------- long format with Color / Block ----------
   long <- sel %>%
-    pivot_longer(-participant_id, names_to = "cell", values_to = "mean_infl") %>%
+    pivot_longer(-sub_id, names_to = "cell", values_to = "mean_infl") %>%
     mutate(
       Color = case_when(
         startsWith(cell, "b") ~ "Blue",
@@ -117,15 +117,15 @@ generate_binned_anova_wrs2_yuend <- function(
   # ---------- keep only complete 9-cell participants ----------
   wide_check <- long %>%
     unite(Cell, Color, Block, sep = ":", remove = FALSE) %>%
-    select(participant_id, Cell, mean_infl) %>%
+    select(sub_id, Cell, mean_infl) %>%
     pivot_wider(names_from = Cell, values_from = mean_infl)
   
-  complete_ids <- wide_check %>% tidyr::drop_na() %>% pull(participant_id)
+  complete_ids <- wide_check %>% tidyr::drop_na() %>% pull(sub_id)
   
   anova_df <- long %>%
-    filter(participant_id %in% complete_ids) %>%
+    filter(sub_id %in% complete_ids) %>%
     mutate(
-      participant_id = factor(participant_id),
+      sub_id = factor(sub_id),
       Color = factor(Color, levels = c("Blue","Orange","Pink")),
       Block = factor(Block, levels = c("First 10","Middle 10","Last 10")),
       cell  = factor(cell,
@@ -138,7 +138,7 @@ generate_binned_anova_wrs2_yuend <- function(
   
   # Wide again, but only complete cases, for yuend
   sel_complete <- sel %>%
-    filter(participant_id %in% complete_ids)
+    filter(sub_id %in% complete_ids)
   
   # ==========================================================
   # 1) ONE-WAY trimmed-means RM ANOVA over 9 cells
@@ -149,7 +149,7 @@ generate_binned_anova_wrs2_yuend <- function(
   rm_fit <- WRS2::rmanova(
     y      = anova_df$mean_infl,
     groups = anova_df$cell,
-    blocks = anova_df$participant_id,
+    blocks = anova_df$sub_id,
     tr     = tr
   )
   

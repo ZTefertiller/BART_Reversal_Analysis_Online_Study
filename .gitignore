@@ -96,3 +96,9 @@ pug_presenation_scripts/
 modeling/ewmv/ewmv_vec
 modeling/stl/stl_vec
 modeling/fourpar/4par
+
+# output/ is ignored, but these two small derived tables are tracked on purpose
+# (git add -f): they let the LOOIC comparison and diagnostics sections of the
+# report render without the multi-GB fit objects.
+#   output/model_comparison/looic_results_new_fits.rds   (107 KB)
+#   output/model_comparison/model_diagnostics_table.csv  (550 B)

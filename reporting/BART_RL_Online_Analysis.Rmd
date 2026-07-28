@@ -40,6 +40,12 @@ source(here::here("analysis", "plotting", "build_block_features.R"))
 # a small helper so each figure is exported the same way in one line.
 PF_DIR <- here::here("reporting", "BART_RL_Online_figure_outputs")
 dir.create(PF_DIR, recursive = TRUE, showWarnings = FALSE)
+
+# Exported .xlsx tables land here. openxlsx::saveWorkbook() only *warns* when the
+# target directory is missing, and this report suppresses warnings, so without
+# this the summary-table exports would vanish silently on a fresh clone.
+TBL_DIR <- here::here("reporting", "tables")
+dir.create(TBL_DIR, recursive = TRUE, showWarnings = FALSE)
 .pf_save <- function(plot, name, width, height, dpi = 300) {
   ggsave(file.path(PF_DIR, paste0(name, ".png")), plot,
          width = width, height = height, dpi = dpi, bg = "white",
@@ -59,10 +65,10 @@ theme_set(theme_minimal(base_size = 12, base_family = "Arial"))
 )
 
 # ---- data -----------------------------------------------------------------
-# Published, de-identified trial-level data (sub_id is the public key; it is
-# also used as participant_id so every downstream grouping/join works unchanged).
+# Published, de-identified trial-level data. sub_id (1-118) is the participant
+# key throughout: it is what the analysis functions group and join on, and it is
+# the order the model fits index subjects in.
 data <- read.csv(here::here("data_published", "bart_rl_online_trials.csv"))
-data$participant_id <- data$sub_id
 data <- append_block_averages(
   data, block_size = 10L,
   blocks_per_color = c(b = 6L, o = 6L, y = 6L, p = 3L),
@@ -77,27 +83,53 @@ BAL_COLS <- c(Blue = "#2630F5", Orange = "#E68D33",
 ```
 
 ```{r fits-setup, include=FALSE}
-# The 3.2GB fits are only needed for the LOOIC table, the parameter-recovery
-# grid, and the Bayesian group-level contrasts. Everything else reads the
-# lightweight modeling/ewmv/ewmv_by_block.csv.
-fits <- readRDS(here::here("mcmc", "model_fits_list.rds"))
-get_fit <- function(pattern) {
-  idx <- grep(pattern, names(fits), ignore.case = TRUE)
-  if (length(idx) != 1) stop("fit pattern '", pattern, "' matched ", length(idx))
-  fits[[idx]]
+# The multi-GB fit objects are only needed for the LOOIC table, the group-level
+# MCMC diagnostics, and the Bayesian group-level contrasts. They are too large
+# for the repo and live on OSF; drop model_fits_list.rds into mcmc/ to enable
+# those sections. Everything else — every behavioural and trait-correlation
+# figure — renders from data_published/ alone, so the report is built to run
+# either way rather than failing here.
+.fits_path <- here::here("mcmc", "model_fits_list.rds")
+HAVE_FITS  <- file.exists(.fits_path)
+
+if (HAVE_FITS) {
+  fits <- readRDS(.fits_path)
+  get_fit <- function(pattern) {
+    idx <- grep(pattern, names(fits), ignore.case = TRUE)
+    if (length(idx) != 1) stop("fit pattern '", pattern, "' matched ", length(idx))
+    fits[[idx]]
+  }
+  ewmv_blue   <- get_fit("^ewmv.*blue");   ewmv_orange <- get_fit("^ewmv.*orange")
+  ewmv_pink   <- get_fit("^ewmv.*pink")
+  stl_blue    <- get_fit("^stl.*blue");    stl_orange  <- get_fit("^stl.*orange")
+  stl_pink    <- get_fit("^stl.*pink")
+  fourpar_blue   <- get_fit("^fourpar.*blue");   fourpar_orange <- get_fit("^fourpar.*orange")
+  fourpar_pink   <- get_fit("^fourpar.*pink")
 }
-ewmv_blue   <- get_fit("^ewmv.*blue");   ewmv_orange <- get_fit("^ewmv.*orange")
-ewmv_pink   <- get_fit("^ewmv.*pink")
-stl_blue    <- get_fit("^stl.*blue");    stl_orange  <- get_fit("^stl.*orange")
-stl_pink    <- get_fit("^stl.*pink")
-fourpar_blue   <- get_fit("^fourpar.*blue");   fourpar_orange <- get_fit("^fourpar.*orange")
-fourpar_pink   <- get_fit("^fourpar.*pink")
+
+# The LOOIC section can also run from its cached result without the fits.
+.loo_cache  <- here::here("output", "model_comparison", "looic_results_new_fits.rds")
+HAVE_LOOIC  <- HAVE_FITS || file.exists(.loo_cache)
+
+# The trait-robustness section needs subject-level posterior draws: either the
+# compact per-condition file (~47 MB) or the full fits bundle.
+HAVE_DRAWS <- HAVE_FITS || file.exists(here::here("mcmc", "ewmv_subject_draws.rds"))
+```
+
+```{r fits-missing-note, echo=FALSE, results='asis', eval=!HAVE_FITS}
+cat("> **Note.** `mcmc/model_fits_list.rds` was not found, so the sections that",
+    "read the posterior draws (LOOIC comparison, group-level MCMC diagnostics,",
+    "the Bayesian group contrasts, and the trait-correlation robustness checks)",
+    "are skipped. Download the fits from OSF into `mcmc/` to include them —",
+    "`ewmv_subject_draws.rds` (~47 MB) is enough for the robustness section on",
+    "its own. Every other figure and table below is reproduced from",
+    "`data_published/`.\n\n")
 ```
 
 # Sample
 
 ```{r demographics, results='asis'}
-.demo <- data %>% dplyr::distinct(participant_id, .keep_all = TRUE)
+.demo <- data %>% dplyr::distinct(sub_id, .keep_all = TRUE)
 .age  <- suppressWarnings(as.numeric(.demo$age))
 .age  <- .age[is.finite(.age)]
 .gen  <- tolower(trimws(as.character(.demo$gender)))
@@ -118,7 +150,7 @@ cat(sprintf(
 ## Missing questionnaire data
 
 ```{r q-missing, results='asis'}
-.demo <- data %>% dplyr::distinct(participant_id, .keep_all = TRUE)
+.demo <- data %>% dplyr::distinct(sub_id, .keep_all = TRUE)
 .Nn   <- nrow(.demo)
 
 # label -> total-score column
@@ -149,7 +181,7 @@ the separate supplement (`reporting/supplementary_tables.Rmd`).
 ```{r summary-table}
 source(here::here("analysis", "tables", "compact_behavior.R"))
 res_behavior <- build_compact_tables(
-  data, out_prefix = here::here("reporting", "tables", "paper_bart_summary"))
+  data, out_prefix = file.path(TBL_DIR, "paper_bart_summary"))
 
 res_behavior$collapsed %>%
   kbl(align = "lcccc", caption = "BART Summary") %>%
@@ -165,7 +197,7 @@ expl_cond <- data %>%
          balloon_color != "b" | trial_number < 91,
          balloon_color != "o" | trial_number > 90) %>%
   mutate(.pop = is_popped(popped)) %>%
-  group_by(participant_id, balloon_color) %>%
+  group_by(sub_id, balloon_color) %>%
   summarise(n_pop = sum(.pop, na.rm = TRUE), .groups = "drop") %>%
   mutate(Condition = recode(balloon_color, b = "Pre-reversal",
                             o = "Post-reversal", p = "Control"),
@@ -277,9 +309,9 @@ q_core <- c("spq_total", "spq_cogper", "spq_interp", "spq_disorg",
 q_density_vars <- intersect(unique(c(q_vars, unlist(Q_GROUPS))),
                             names(add_spq_factors(data)))
 q_per_id <- data %>%
-  distinct(participant_id, .keep_all = TRUE) %>%
+  distinct(sub_id, .keep_all = TRUE) %>%
   add_spq_factors() %>%
-  select(participant_id, all_of(q_density_vars)) %>%
+  select(sub_id, all_of(q_density_vars)) %>%
   mutate(across(all_of(q_density_vars), ~ suppressWarnings(as.numeric(.x))))
 
 make_q_heatmap <- function(vars) {
@@ -479,11 +511,11 @@ expl_scatter_df <- data %>%
          balloon_color != "b" | trial_number < 91,
          balloon_color != "o" | trial_number > 90) %>%
   mutate(.pop = is_popped(popped)) %>%
-  group_by(participant_id, balloon_color) %>%
+  group_by(sub_id, balloon_color) %>%
   summarise(n_expl = sum(.pop, na.rm = TRUE), .groups = "drop") %>%
-  left_join(data %>% distinct(participant_id, .keep_all = TRUE) %>%
-              select(participant_id, all_of(names(q_recode))),
-            by = "participant_id") %>%
+  left_join(data %>% distinct(sub_id, .keep_all = TRUE) %>%
+              select(sub_id, all_of(names(q_recode))),
+            by = "sub_id") %>%
   pivot_longer(cols = all_of(names(q_recode)), names_to = "q_col",
                values_to = "q_val") %>%
   mutate(q_label = recode(q_col, !!!q_recode),
@@ -539,7 +571,7 @@ sig_df <- combined_sc %>%
 ## Model Comparison (LOOIC)
 Same as paper
 
-```{r looic-tables, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+```{r looic-tables, echo=FALSE, message=FALSE, warning=FALSE, results="asis", eval=HAVE_LOOIC}
 suppressPackageStartupMessages(library(here))
 source(here::here("analysis","05_looic_comparison.R"))
 
@@ -557,13 +589,14 @@ loo_tbl <- loo_comb %>%
   dplyr::transmute(
     Condition, Model,
     LOOIC        = sprintf("%.1f", LOOIC),
-    `ΔLOOIC`     = ifelse(`ΔLOOIC` == 0, "0 (best)",
-                          sprintf("%.1f ± %.1f", `ΔLOOIC`, dLOOIC_se)),
+    # dLOOIC is the ASCII internal name; the Δ appears only as the display header
+    `ΔLOOIC`     = ifelse(dLOOIC == 0, "0 (best)",
+                          sprintf("%.1f ± %.1f", dLOOIC, dLOOIC_se)),
     `LOO weight` = sprintf("%.2f", `LOO weight`),
     `Max Pareto k` = sprintf("%.2f", `Max Pareto k`)
   )
 
-best_rows <- which(loo_comb$`ΔLOOIC` == 0)
+best_rows <- which(loo_comb$dLOOIC == 0)
 
 loo_tbl %>%
   dplyr::select(-Condition) %>%
@@ -598,7 +631,7 @@ if (is.null(rec_grid_ewmv)) {
 
 ## Model diagnostics
 
-```{r model-diagnostics, results='asis'}
+```{r model-diagnostics, results="asis", eval=HAVE_FITS}
 .gl_diag <- function(fit, model, cond) {
   v  <- dimnames(fit$draws())$variable
   gl <- grep("^(mu_|sigma_|sigma\\[|sigma$)", v, value = TRUE)
@@ -643,7 +676,7 @@ write.csv(.diag_tbl,
 
 ## Bayesian group-level contrasts
 
-```{r bayesian-contrasts-setup, include=FALSE}
+```{r bayesian-contrasts-setup, include=FALSE, eval=HAVE_FITS}
 source(here::here("analysis", "plotting", "bayesian_block_contrasts.R"))
 source(here::here("analysis", "plotting", "bayesian_contrasts_variants.R"))
 
@@ -677,7 +710,7 @@ contrasts_fourpar <- .bayesian_group_contrasts(
 
 ### Parameter - Condition Contrasts table
 
-```{r contrasts-table}
+```{r contrasts-table, eval=HAVE_FITS}
 .format_contrasts_kable(
   list(EWMV = contrasts_ewmv, STL = contrasts_stl, `4PAR` = contrasts_fourpar))
 ```
@@ -689,7 +722,7 @@ bordered box (top row) with the **parameter name above it**, directly above its
 group-level contrast box (bottom row, no duplicate name). Columns are ordered
 ψ, ξ, ρ, λ, τ at the same standardized width.
 
-```{r param-sweep-contrast-grid-setup, include=FALSE}
+```{r param-sweep-contrast-grid-setup, include=FALSE, eval=HAVE_FITS}
 source(here::here("analysis", "plotting", "ewmv_param_sweeps.R"))
 
 # parameter (contrast group_param)  ->  matching sweep line-graph
@@ -791,7 +824,7 @@ for (nm in c("default", "mono"))
 
 
 
-```{r param-sweep-contrast-grid-mono, fig.width=33, fig.height=13.5}
+```{r param-sweep-contrast-grid-mono, fig.width=33, fig.height=13.5, eval=HAVE_FITS}
 .grid_mono
 ```
 
@@ -899,7 +932,7 @@ A correlation **survives** iff it stays Holm-significant across *all* LOO drops
 **and** its posterior-*r* 95% interval excludes zero; otherwise it is
 **fragile**.
 
-```{r robustness-run, include=FALSE}
+```{r robustness-run, include=FALSE, eval=HAVE_DRAWS}
 source(here::here("analysis", "plotting", "ewmv_trait_robustness.R"))
 .rob <- ewmv_trait_robustness(verbose = FALSE)
 write.csv(.rob$table,
@@ -907,7 +940,7 @@ write.csv(.rob$table,
           row.names = FALSE)
 ```
 
-```{r robustness-table}
+```{r robustness-table, eval=HAVE_DRAWS}
 .robustness_display(.rob$table) %>%
   kableExtra::kbl(align = "l",
     caption = "EWMV trait–parameter correlation robustness: leave-one-out jackknife and posterior propagation, per significant correlation.") %>%
@@ -917,7 +950,7 @@ write.csv(.rob$table,
                        background = "#EAF7EA")
 ```
 
-```{r robustness-summary, results='asis'}
+```{r robustness-summary, results="asis", eval=HAVE_DRAWS}
 cat("```\n", .rob$summary, "\n```\n", sep = "")
 ```
 
@@ -928,7 +961,7 @@ cat("```\n", .rob$summary, "\n```\n", sep = "")
 A single at-a-glance table and forest plot of all Holm-significant EWMV
 trait–parameter correlations and how they fare under both robustness checks.
 
-```{r robustness-compact-table}
+```{r robustness-compact-table, eval=HAVE_DRAWS}
 ewmv_robustness_compact(.rob$table) %>%
   kableExtra::kbl(align = c("l", "c", "c", "c", "c", "c"),
     caption = "Robustness at a glance: full-sample r, leave-one-out r range, and posterior-r 95% interval for every Holm-significant EWMV parameter × questionnaire correlation. Survivors (Holm-significant across all LOO drops and posterior-r interval excluding zero) are listed first.") %>%
@@ -938,7 +971,7 @@ ewmv_robustness_compact(.rob$table) %>%
                        bold = TRUE, background = "#EAF7EA")
 ```
 
-```{r robustness-forest, fig.width=12, fig.height=5}
+```{r robustness-forest, fig.width=12, fig.height=5, eval=HAVE_DRAWS}
 .rob_forest <- ewmv_robustness_forest(.rob$table, base_size = 14, family = "Arial")
 .pf_save(.rob_forest, "ewmv_trait_robustness_forest", width = 12, height = 5)
 .rob_forest

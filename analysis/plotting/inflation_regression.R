@@ -43,7 +43,7 @@ run_inflation_questionnaire_regressions <- function(
       balloon_color != "o" | trial_number > 90
     ) %>%
     mutate(.pop = is_popped(popped)) %>%
-    group_by(participant_id, balloon_color) %>%
+    group_by(sub_id, balloon_color) %>%
     summarise(
       adj_infl = mean(inflations[!.pop], na.rm = TRUE),
       .groups  = "drop"
@@ -55,11 +55,11 @@ run_inflation_questionnaire_regressions <- function(
 
   # One questionnaire row per participant
   q_df <- data %>%
-    distinct(participant_id, .keep_all = TRUE) %>%
-    select(participant_id, all_of(names(questionnaires)))
+    distinct(sub_id, .keep_all = TRUE) %>%
+    select(sub_id, all_of(names(questionnaires)))
 
   merged <- adj_by_color %>%
-    left_join(q_df, by = "participant_id")
+    left_join(q_df, by = "sub_id")
 
   # Regression: adj_infl ~ questionnaire_score, per (color × questionnaire)
   results <- map_dfr(names(colors), function(col_code) {
@@ -128,13 +128,13 @@ run_explosion_questionnaire_regressions <- function(
       balloon_color != "o" | trial_number > 90
     ) %>%
     mutate(.pop = is_popped(popped)) %>%
-    group_by(participant_id, balloon_color) %>%
+    group_by(sub_id, balloon_color) %>%
     summarise(n_expl = sum(.pop, na.rm = TRUE), .groups = "drop") %>%
     mutate(Color = recode(balloon_color, !!!colors), color_code = balloon_color)
 
-  q_df <- data %>% distinct(participant_id, .keep_all = TRUE) %>%
-    select(participant_id, all_of(names(questionnaires)))
-  merged <- expl_by_color %>% left_join(q_df, by = "participant_id")
+  q_df <- data %>% distinct(sub_id, .keep_all = TRUE) %>%
+    select(sub_id, all_of(names(questionnaires)))
+  merged <- expl_by_color %>% left_join(q_df, by = "sub_id")
 
   results <- map_dfr(names(colors), function(col_code) {
     d_color <- filter(merged, color_code == col_code)

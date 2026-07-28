@@ -97,10 +97,10 @@ create_final_loo_table <- function(loo_list) {
     cmp_df$Model <- rownames(cmp_df)
     df <- df |>
       left_join(cmp_df |> select(Model, elpd_diff), by = "Model") |>
-      mutate(`ΔLOOIC` = -2 * elpd_diff) |>
+      mutate(dLOOIC = -2 * elpd_diff) |>
       select(-elpd_diff)
   } else {
-    df$`ΔLOOIC` <- 0
+    df$dLOOIC <- 0
   }
   
   # ---- ADD LOO MODEL WEIGHTS ----
@@ -193,10 +193,26 @@ plot_loo_loss <- function(cmp_table, title) {
 
 # Tidy table across the three conditions, adding the SE of ΔLOOIC (= 2*se_diff
 # from loo_compare) so differences are interpretable.
+# Older cached loo_res objects carry the delta column as a literal "ΔLOOIC".
+# Whether that name matches the UTF-8 literal in this file depends on the locale
+# the cache was written under, so match it structurally instead: any column that
+# is not one of the known ASCII ones is the delta column. Everything downstream
+# uses the ASCII name dLOOIC.
+.normalise_looic_tbl <- function(tbl) {
+  if (is.null(tbl) || !nrow(tbl)) return(tbl)
+  if ("dLOOIC" %in% names(tbl)) return(tbl)
+  known <- c("Model", "LOOIC", "LOO weight", "Max Pareto k", "% k > 0.7")
+  cand <- setdiff(names(tbl), known)
+  if (length(cand) == 1L) names(tbl)[names(tbl) == cand] <- "dLOOIC"
+  else stop("build_looic_combined: cannot identify the delta-LOOIC column; ",
+            "got columns: ", paste(names(tbl), collapse = ", "))
+  tbl
+}
+
 build_looic_combined <- function(loo_res) {
   conds <- c(Blue = "blue", Orange = "orange", Pink = "pink")
   purrr::map_dfr(names(conds), function(cond) {
-    tbl <- loo_res[[conds[cond]]]
+    tbl <- .normalise_looic_tbl(loo_res[[conds[cond]]])
     if (is.null(tbl) || !nrow(tbl)) return(NULL)
     cmp <- loo_res$cmp[[conds[cond]]]
     se <- if (!is.null(cmp) && "se_diff" %in% names(cmp)) {
@@ -218,10 +234,10 @@ plot_looic_combined <- function(loo_res) {
   d <- d |>
     mutate(Model = factor(Model, levels = c("4PAR", "STL", "EWMV")))
   cond_cols <- c(Blue = "#2630F5", Orange = "#E68D33", Pink = "#CF3160")
-  ggplot(d, aes(x = `ΔLOOIC`, y = Model, colour = Condition)) +
+  ggplot(d, aes(x = dLOOIC, y = Model, colour = Condition)) +
     geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60") +
-    geom_errorbarh(aes(xmin = pmax(0, `ΔLOOIC` - dLOOIC_se),
-                       xmax = `ΔLOOIC` + dLOOIC_se),
+    geom_errorbarh(aes(xmin = pmax(0, dLOOIC - dLOOIC_se),
+                       xmax = dLOOIC + dLOOIC_se),
                    height = 0, linewidth = 0.7, na.rm = TRUE) +
     geom_point(size = 2.8) +
     facet_wrap(~ Condition, nrow = 1) +

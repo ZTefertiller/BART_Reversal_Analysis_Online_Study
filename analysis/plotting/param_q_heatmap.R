@@ -36,21 +36,18 @@ suppressPackageStartupMessages({
     )
   }
   
-  # ---- ALIGNMENT FIX (2026-07) ----------------------------------------------
+  # ---- ALIGNMENT -------------------------------------------------------------
   # Parameter column [k] belongs to the k-th subject IN THE FIT'S INDEX ORDER,
-  # which create_stan_params() set as arrange(participant_id, trial_number) ->
-  # distinct(participant_id): i.e. GLOBAL ALPHABETICAL participant_id. Callers
-  # build qdf from the combined data file, whose rows are recruitment-blocked
-  # (arrange(recruitment, participant_id)), so qdf can arrive in a DIFFERENT order.
-  # Assigning means[k] to qdf row k by position (below) is only correct once qdf
-  # is sorted into the fit's index order; otherwise param[k] is attached to the
-  # wrong participant (was true for 117/118 rows since the 2025-11-25 recruitment
-  # merge). Sorting here also guarantees the returned row order == fit draw
-  # column order, which downstream posterior-propagation code relies on.
-  if (!"participant_id" %in% names(qdf))
-    stop(".extract_params_from_fit: qdf must contain participant_id to align to ",
+  # which create_stan_params() sets as arrange(sub_id, trial_number) -> the k-th
+  # distinct sub_id. Means are assigned to qdf row k by position below, so qdf
+  # must first be sorted into that same order; a qdf arriving in any other row
+  # order would attach each parameter to the wrong participant. Sorting here also
+  # guarantees the returned row order == fit draw column order, which the
+  # downstream posterior-propagation code relies on.
+  if (!"sub_id" %in% names(qdf))
+    stop(".extract_params_from_fit: qdf must contain sub_id to align to ",
          "the fit's index order")
-  qdf <- dplyr::arrange(qdf, participant_id)
+  qdf <- dplyr::arrange(qdf, sub_id)
 
   n_q <- nrow(qdf)
   out <- qdf %>% dplyr::mutate(.fit_name = fit_name)
@@ -234,9 +231,9 @@ run_param_q_heatmap <- function(
   ); param_names_fourpar <- names(param_map_fourpar)
   
   # --- questionnaire bases (one row per participant per block) ---
-  qdf_blue   <- df_blue_pre    %>% distinct(participant_id, .keep_all = TRUE)
-  qdf_orange <- df_orange_post %>% distinct(participant_id, .keep_all = TRUE)
-  qdf_pink   <- df_pink        %>% distinct(participant_id, .keep_all = TRUE)
+  qdf_blue   <- df_blue_pre    %>% distinct(sub_id, .keep_all = TRUE)
+  qdf_orange <- df_orange_post %>% distinct(sub_id, .keep_all = TRUE)
+  qdf_pink   <- df_pink        %>% distinct(sub_id, .keep_all = TRUE)
   
   # --- extract parameters from the fits you pass in ---
   dfb_ewmv <- .extract_params_from_fit(ewmv_blue,   "ewmv_blue",   param_names_ewmv,  qdf_blue,   prefix = "ewmv_")

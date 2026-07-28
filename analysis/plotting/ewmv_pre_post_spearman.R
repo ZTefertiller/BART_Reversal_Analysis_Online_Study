@@ -58,7 +58,6 @@ ewmv_prepost_sig_pairs <- function(
     adjust = c("holm", "none"), alpha = 0.05, method = "pearson") {
   adjust <- match.arg(adjust)
   d <- utils::read.csv(by_block_csv)
-  if (!"participant_id" %in% names(d) && "sub_id" %in% names(d)) d$participant_id <- d$sub_id
   long <- dplyr::bind_rows(
     .ech_cor_long(d, "pre_",  "pre",     method),
     .ech_cor_long(d, "post_", "post",    method),
@@ -129,7 +128,6 @@ ewmv_steiger_auto <- function(
     base_size = 20, family = "Arial",
     pairs = ewmv_prepost_sig_pairs(by_block_csv)) {
   d <- utils::read.csv(by_block_csv)
-  if (!"participant_id" %in% names(d) && "sub_id" %in% names(d)) d$participant_id <- d$sub_id
   if (nrow(pairs) == 0L)
     return(list(plot = NULL, table = NULL, results = pairs[0, ], pairs = pairs))
 
@@ -172,7 +170,6 @@ ewmv_bootstrap_prepost <- function(
     pairs = .PPS_SIG_SET, R = 5000, base_size = 20, family = "Arial",
     seed = 42) {
   d <- utils::read.csv(by_block_csv)
-  if (!"participant_id" %in% names(d) && "sub_id" %in% names(d)) d$participant_id <- d$sub_id
 
   set.seed(seed)
   rows <- purrr::pmap_dfr(pairs, function(param, trait) {

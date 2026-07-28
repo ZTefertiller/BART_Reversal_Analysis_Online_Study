@@ -99,7 +99,6 @@ ewmv_cutdown_heatmap <- function(
     by_block_csv = here::here("data_published", "bart_rl_online_ewmv_params.csv"),
     base_size = 13, family = "Arial", method = "pearson", cell_mult = 0.5) {
   d <- utils::read.csv(by_block_csv)
-  if (!"participant_id" %in% names(d) && "sub_id" %in% names(d)) d$participant_id <- d$sub_id
   long <- bind_rows(
     .ech_cor_long(d, "pre_",  "pre reversal",  method),
     .ech_cor_long(d, "post_", "post reversal", method),
@@ -123,21 +122,21 @@ ewmv_cutdown_heatmap_nofirst <- function(
     df %>%
       filter(balloon_color == color,
              if (pre) trial_number < 91 else trial_number > 90) %>%
-      arrange(participant_id, trial_number) %>%
-      group_by(participant_id) %>% slice(-1) %>% ungroup() %>%
-      distinct(participant_id, .keep_all = TRUE) %>%
-      arrange(participant_id)
+      arrange(sub_id, trial_number) %>%
+      group_by(sub_id) %>% slice(-1) %>% ungroup() %>%
+      distinct(sub_id, .keep_all = TRUE) %>%
+      arrange(sub_id)
   }
-  q_per_id <- df %>% distinct(participant_id, .keep_all = TRUE) %>%
+  q_per_id <- df %>% distinct(sub_id, .keep_all = TRUE) %>%
     add_spq_factors() %>%
-    select(participant_id, all_of(names(.ECH_Q)))
+    select(sub_id, all_of(names(.ECH_Q)))
 
   one <- function(rds, color, pre, cond_label) {
     fit <- readRDS(rds)
     qdf <- qorder(color, pre)
     pp  <- .extract_params_from_fit(fit, "ewmv_nofirst", pn, qdf, prefix = "p_") %>%
-      select(participant_id, paste0("p_", pn)) %>%
-      left_join(q_per_id, by = "participant_id")
+      select(sub_id, paste0("p_", pn)) %>%
+      left_join(q_per_id, by = "sub_id")
     .ech_cor_long(pp, "p_", cond_label, method)
   }
 

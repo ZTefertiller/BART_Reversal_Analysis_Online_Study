@@ -29,7 +29,6 @@ ewmv_trait_long <- function(
     by_block_csv = here::here("data_published", "bart_rl_online_ewmv_params.csv"),
     method = "pearson") {
   d <- utils::read.csv(by_block_csv)
-  if (!"participant_id" %in% names(d) && "sub_id" %in% names(d)) d$participant_id <- d$sub_id
   long <- bind_rows(
     .ech_cor_long(d, "pre_",  "pre reversal",  method),
     .ech_cor_long(d, "post_", "post reversal", method),

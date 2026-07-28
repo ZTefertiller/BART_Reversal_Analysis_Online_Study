@@ -14,8 +14,8 @@ drop_popped <- function(df) {
 # Assign fixed 10-trial bins from trial order using ALL trials (popped + non-popped)
 assign_fixed_bins <- function(df, n_keep = 30L) {
   df %>%
-    arrange(participant_id, trial_number) %>%
-    group_by(participant_id) %>%
+    arrange(sub_id, trial_number) %>%
+    group_by(sub_id) %>%
     mutate(rank30 = row_number()) %>%
     filter(rank30 <= n_keep) %>%
     mutate(
@@ -31,10 +31,10 @@ fixedbin_mean_success <- function(all_trials_slice, success_slice) {
   all_trials_slice %>%
     select(-any_of("inflations")) %>%  # avoid .x/.y suffixing
     left_join(
-      success_slice %>% select(participant_id, trial_number, inflations),
-      by = c("participant_id", "trial_number")
+      success_slice %>% select(sub_id, trial_number, inflations),
+      by = c("sub_id", "trial_number")
     ) %>%
-    group_by(participant_id, Block) %>%
+    group_by(sub_id, Block) %>%
     summarise(mean_infl = mean_or_na(inflations), .groups = "drop")
 }
 
@@ -59,11 +59,11 @@ ensure_adjusted <- function(df) {
 
 # Compute blocks by trial order WITHIN COLOR (groups of 10)
 add_blocks_per_color <- function(df, block_size = 10L) {
-  stopifnot(all(c("participant_id","balloon_color","trial_number") %in% names(df)))
+  stopifnot(all(c("sub_id","balloon_color","trial_number") %in% names(df)))
   if (!"block" %in% names(df)) {
     df <- df %>%
-      arrange(participant_id, balloon_color, trial_number) %>%
-      group_by(participant_id, balloon_color) %>%
+      arrange(sub_id, balloon_color, trial_number) %>%
+      group_by(sub_id, balloon_color) %>%
       mutate(block = ceiling(row_number() / block_size)) %>%
       ungroup()
   }
@@ -84,7 +84,7 @@ block_means <- function(df, mean_mode = c("adjusted","all"),
   
   out <- df %>%
     filter(block %in% keep_blocks) %>%
-    group_by(participant_id, balloon_color, block) %>%
+    group_by(sub_id, balloon_color, block) %>%
     summarise(mean_value = mean(.data[[value_col]], na.rm = TRUE), .groups = "drop") %>%
     mutate(dv_label = dv_label)
   
@@ -96,7 +96,7 @@ block_means <- function(df, mean_mode = c("adjusted","all"),
 # age and sex 
 summarize_recruitment <- function(df, recruitment_name) {
   df %>%
-    distinct(participant_id, .keep_all = TRUE) %>%
+    distinct(sub_id, .keep_all = TRUE) %>%
     summarise(
       recruitment = recruitment_name,
       n = n(),

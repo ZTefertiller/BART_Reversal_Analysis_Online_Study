@@ -100,9 +100,9 @@ source(here::here("analysis", "plotting", "ewmv_trait_robustness_verify.R")) # e
     # removal pushes the Holm-adjusted p to >= alpha (or vice-versa).
     loo_padj_max = max(loo_padj),
     loo_sig_flips = any(loo_padj >= alpha),
-    most_influential_pid = d$participant_id[most_inf],
+    most_influential_pid = d$sub_id[most_inf],
     most_influential_delta_r = (loo - full$r)[which.max(abs(loo - full$r))],
-    .loo_r = list(setNames(loo, d$participant_id[idx]))
+    .loo_r = list(setNames(loo, d$sub_id[idx]))
   )
 }
 
@@ -168,7 +168,6 @@ ewmv_trait_robustness <- function(
                 alpha, nrow(sig)))
 
   d <- utils::read.csv(by_block_csv)
-  if (!"participant_id" %in% names(d) && "sub_id" %in% names(d)) d$participant_id <- d$sub_id
 
   # ---- (1) LOO jackknife for every significant cell ------------------------
   loo_tbl <- pmap_dfr(list(sig$param, sig$q, sig$cond),
